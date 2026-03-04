@@ -1,0 +1,24 @@
+# ── Core framework ──────────────────────────────────────────────────────────
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20      # multipart file uploads in FastAPI
+
+# ── LLM provider SDKs ───────────────────────────────────────────────────────
+anthropic==0.50.0
+openai==1.70.0
+httpx==0.28.1                 # used by local_client + httpx transport
+
+# ── Document parsing ─────────────────────────────────────────────────────────
+pdfminer.six==20231228        # PDF text extraction
+python-docx==1.1.2            # .docx parsing
+beautifulsoup4==4.13.3        # HTML parsing
+lxml==5.3.1                   # fast HTML/XML parser (BS4 backend)
+
+# ── Validation & serialisation ──────────────────────────────────────────────
+pydantic==2.11.2
+
+# ── Environment configuration ────────────────────────────────────────────────
+python-dotenv==1.1.0
+
+# ── Async utilities ──────────────────────────────────────────────────────────
+anyio==4.9.0                  # async compatibility layer used by FastAPI
