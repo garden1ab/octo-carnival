@@ -1,11 +1,5 @@
 """
-agents/worker.py — Worker LLM Agent.
-
-Each WorkerAgent:
-  1. Holds a reference to one BaseLLMClient (provider-agnostic).
-  2. Receives a SubTask from the Controller.
-  3. Builds a prompt that includes any document chunks.
-  4. Calls its LLM client and returns an AgentResponse.
+agents/worker.py — Worker LLM Agent (v2 with tools_context support).
 """
 
 from __future__ import annotations
@@ -20,7 +14,6 @@ from schemas import AgentResponse, SubTask, TaskStatus
 
 logger = logging.getLogger(__name__)
 
-# Role-specific system prompt prefixes
 _ROLE_PROMPTS: dict[str, str] = {
     "researcher":  "You are a meticulous researcher. Gather facts, cite sources when possible, and be thorough.",
     "summarizer":  "You are a precise summarizer. Condense information clearly without losing key details.",
@@ -33,63 +26,32 @@ _ROLE_PROMPTS: dict[str, str] = {
 
 
 class WorkerAgent:
-    """
-    An independent worker that executes a single SubTask using its assigned LLM.
-    """
-
     def __init__(self, config: AgentConfig, client: BaseLLMClient):
         self.config = config
         self.client = client
         self.agent_id = config.agent_id
-        logger.info(
-            "WorkerAgent '%s' ready  provider=%s  model=%s",
-            self.agent_id, config.provider, config.model,
-        )
+        logger.info("WorkerAgent '%s' ready  provider=%s  model=%s", self.agent_id, config.provider, config.model)
 
-    # ------------------------------------------------------------------
-    # Main execution path
-    # ------------------------------------------------------------------
-
-    async def execute(self, task: SubTask) -> AgentResponse:
-        """Process a SubTask and return an AgentResponse."""
-        logger.info(
-            "Agent '%s' starting task %s (role=%s)",
-            self.agent_id, task.task_id, task.role,
-        )
+    async def execute(self, task: SubTask, tools_context: str = "") -> AgentResponse:
+        logger.info("Agent '%s' starting task %s (role=%s)", self.agent_id, task.task_id, task.role)
         start = time.monotonic()
-
         try:
-            messages = self._build_messages(task)
+            messages = self._build_messages(task, tools_context)
             llm_response = await self.client.complete(messages)
-
             duration = time.monotonic() - start
-            logger.info(
-                "Agent '%s' finished task %s in %.2fs",
-                self.agent_id, task.task_id, duration,
-            )
+            logger.info("Agent '%s' finished task %s in %.2fs", self.agent_id, task.task_id, duration)
             return AgentResponse(
                 task_id=task.task_id,
                 agent_id=self.agent_id,
                 status=TaskStatus.COMPLETED,
                 result=llm_response.content,
-                token_usage={
-                    "input": llm_response.input_tokens,
-                    "output": llm_response.output_tokens,
-                },
+                token_usage={"input": llm_response.input_tokens, "output": llm_response.output_tokens},
                 duration_seconds=duration,
-                metadata={
-                    "model": llm_response.model,
-                    "provider": llm_response.provider,
-                    "finish_reason": llm_response.finish_reason,
-                },
+                metadata={"model": llm_response.model, "provider": llm_response.provider},
             )
-
         except Exception as exc:
             duration = time.monotonic() - start
-            logger.error(
-                "Agent '%s' failed task %s after %.2fs: %s",
-                self.agent_id, task.task_id, duration, exc,
-            )
+            logger.error("Agent '%s' failed task %s: %s", self.agent_id, task.task_id, exc)
             return AgentResponse(
                 task_id=task.task_id,
                 agent_id=self.agent_id,
@@ -98,43 +60,21 @@ class WorkerAgent:
                 duration_seconds=duration,
             )
 
-    # ------------------------------------------------------------------
-    # Prompt construction
-    # ------------------------------------------------------------------
-
-    def _build_messages(self, task: SubTask) -> list[LLMMessage]:
-        """
-        Assemble the message list for the LLM call:
-          1. System message (role persona)
-          2. Optional context from the Controller
-          3. Document chunks (if any)
-          4. The actual instruction
-        """
+    def _build_messages(self, task: SubTask, tools_context: str = "") -> list[LLMMessage]:
         role_prompt = _ROLE_PROMPTS.get(task.role.value, _ROLE_PROMPTS["general"])
-        system_prompt = (
-            f"{role_prompt}\n\n"
-            "Respond only with the content requested. "
-            "Be concise unless depth is explicitly required."
-        )
+        system_prompt = f"{role_prompt}\n\nRespond only with the content requested. Be concise unless depth is required. Format responses in clear markdown."
 
         user_parts: list[str] = []
-
-        # Controller context (e.g. results from other agents or original prompt)
+        if tools_context:
+            user_parts.append(tools_context)
         if task.context:
             user_parts.append(f"## Context\n{task.context}")
-
-        # Document chunks
         if task.document_chunks:
-            doc_sections: list[str] = []
+            doc_sections = []
             for chunk in task.document_chunks:
-                header = (
-                    f"### Document: {chunk.filename}  "
-                    f"(chunk {chunk.chunk_index + 1}/{chunk.total_chunks})"
-                )
+                header = f"### Document: {chunk.filename} (chunk {chunk.chunk_index + 1}/{chunk.total_chunks})"
                 doc_sections.append(f"{header}\n{chunk.text}")
             user_parts.append("## Provided Documents\n\n" + "\n\n---\n\n".join(doc_sections))
-
-        # The task instruction
         user_parts.append(f"## Your Task\n{task.instruction}")
 
         return [
