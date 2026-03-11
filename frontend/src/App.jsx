@@ -2,208 +2,498 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   Send, Paperclip, X, Plus, Trash2, ToggleLeft, ToggleRight,
-  ChevronDown, ChevronRight, Cpu, Zap, Globe, Settings,
-  CheckCircle2, XCircle, Clock, Loader2, Activity, Key, Link
+  ChevronDown, ChevronRight, Cpu, Zap, Globe, CheckCircle2,
+  XCircle, Clock, Loader2, Activity, MessageSquare, Settings,
+  Edit2, Save, RefreshCw, Bot, User, AlertCircle, ChevronUp,
+  RotateCcw, ShieldCheck, SlidersHorizontal,
 } from 'lucide-react'
 
-const API = ''  // same-origin when served by FastAPI
+// ─── Shared primitives ────────────────────────────────────────────────────────
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
-const cls = (...args) => args.filter(Boolean).join(' ')
-const fmt = (s) => s ? s.toFixed(2) + 's' : '—'
-
-// ─── Tiny styled primitives ───────────────────────────────────────────────────
 const Badge = ({ color = 'default', children }) => {
-  const colors = {
-    default: { bg: 'var(--bg-4)', color: 'var(--text-2)', border: 'var(--border)' },
-    green:   { bg: 'var(--green-dim)', color: 'var(--green)', border: '#00ff9d30' },
-    red:     { bg: 'var(--red-dim)', color: 'var(--red)', border: '#ff446630' },
-    accent:  { bg: 'var(--accent-dim)', color: 'var(--accent)', border: '#00e5ff30' },
-    yellow:  { bg: '#ffd16618', color: 'var(--yellow)', border: '#ffd16630' },
-  }
-  const c = colors[color] || colors.default
-  return (
-    <span style={{
-      background: c.bg, color: c.color, border: `1px solid ${c.border}`,
-      borderRadius: 4, padding: '2px 7px', fontSize: 11,
-      fontFamily: 'var(--font-mono)', fontWeight: 500, letterSpacing: '0.03em',
-    }}>{children}</span>
-  )
+  const C = {
+    default: ['var(--bg-4)', 'var(--text-2)', 'var(--border)'],
+    green:   ['var(--green-dim)', 'var(--green)', '#00ff9d30'],
+    red:     ['var(--red-dim)', 'var(--red)', '#ff446630'],
+    accent:  ['var(--accent-dim)', 'var(--accent)', '#00e5ff30'],
+    yellow:  ['#ffd16618', 'var(--yellow)', '#ffd16630'],
+  }[color] || ['var(--bg-4)', 'var(--text-2)', 'var(--border)']
+  return <span style={{ background: C[0], color: C[1], border: `1px solid ${C[2]}`,
+    borderRadius: 4, padding: '2px 7px', fontSize: 11,
+    fontFamily: 'var(--font-mono)', fontWeight: 500, letterSpacing: '0.03em' }}>{children}</span>
 }
 
 const Dot = ({ color = 'var(--text-3)', pulse }) => (
-  <span style={{
-    display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+  <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
     background: color, flexShrink: 0,
-    animation: pulse ? 'pulse-dot 1.2s ease-in-out infinite' : 'none',
-  }} />
+    animation: pulse ? 'pulse-dot 1.2s ease-in-out infinite' : 'none' }} />
 )
 
-// ─── Agent Card ───────────────────────────────────────────────────────────────
-const AgentCard = ({ response, isRunning }) => {
-  const [open, setOpen] = useState(false)
-  const ok = response.status === 'completed'
-  const failed = response.status === 'failed'
+const Spinner = ({ size = 14, color = 'var(--accent)' }) => (
+  <Loader2 size={size} color={color} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+)
+
+const fmt = s => s ? s.toFixed(2) + 's' : '—'
+
+const PROVIDERS = ['anthropic', 'openai', 'openai_compat', 'local']
+const PROVIDER_MODELS = {
+  anthropic: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-haiku-4-5-20251001'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini'],
+  openai_compat: ['custom-model'],
+  local: ['llama3', 'mistral', 'codellama', 'phi3'],
+}
+
+// ─── Input primitive ──────────────────────────────────────────────────────────
+const Inp = ({ label, value, onChange, placeholder, type = 'text', mono = true, small }) => (
+  <div style={{ marginBottom: small ? 8 : 12 }}>
+    {label && <label style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.07em',
+      display: 'block', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>{label.toUpperCase()}</label>}
+    <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)',
+        borderRadius: 6, padding: small ? '6px 9px' : '8px 10px', color: 'var(--text)',
+        fontFamily: mono ? 'var(--font-mono)' : 'var(--font-head)', fontSize: small ? 12 : 13,
+        outline: 'none', boxSizing: 'border-box' }} />
+  </div>
+)
+
+const Sel = ({ label, value, onChange, options, small }) => (
+  <div style={{ marginBottom: small ? 8 : 12 }}>
+    {label && <label style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.07em',
+      display: 'block', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>{label.toUpperCase()}</label>}
+    <select value={value} onChange={e => onChange(e.target.value)}
+      style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)',
+        borderRadius: 6, padding: small ? '6px 9px' : '8px 10px', color: 'var(--text)',
+        fontFamily: 'var(--font-mono)', fontSize: small ? 12 : 13, outline: 'none' }}>
+      {options.map(o => <option key={o.value ?? o} value={o.value ?? o}>{o.label ?? o}</option>)}
+    </select>
+  </div>
+)
+
+// ─── Agent Form ───────────────────────────────────────────────────────────────
+const AgentForm = ({ initial, onSave, onCancel, isEdit }) => {
+  const blank = { agent_id: '', provider: 'anthropic', model: 'claude-haiku-4-5-20251001',
+    base_url: '', api_key: '', max_tokens: 2048, temperature: 0.7, timeout: 60, max_retries: 3 }
+  const [f, setF] = useState(initial || blank)
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }))
+  const modelOpts = PROVIDER_MODELS[f.provider] || ['custom-model']
 
   return (
-    <div style={{
-      border: `1px solid ${ok ? '#00ff9d28' : failed ? '#ff446628' : 'var(--border)'}`,
-      borderRadius: var => 'var(--radius)',
-      background: ok ? 'var(--green-dim)' : failed ? 'var(--red-dim)' : 'var(--bg-3)',
-      overflow: 'hidden',
-      animation: 'slide-in 0.25s ease',
-    }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-          padding: '10px 14px', background: 'none', border: 'none',
-          cursor: 'pointer', color: 'var(--text)', textAlign: 'left',
-        }}
-      >
-        {isRunning
-          ? <Loader2 size={14} color="var(--accent)" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
-          : ok
-            ? <CheckCircle2 size={14} color="var(--green)" style={{ flexShrink: 0 }} />
-            : <XCircle size={14} color="var(--red)" style={{ flexShrink: 0 }} />
-        }
-        <span style={{ fontFamily: 'var(--font-head)', fontWeight: 600, fontSize: 13 }}>
-          {response.agent_id}
+    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border-2)',
+      borderRadius: 10, padding: 16, animation: 'slide-in 0.2s ease' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <span style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>
+          {isEdit ? '✎ Edit Agent' : '+ New Agent'}
         </span>
-        <Badge color={ok ? 'green' : failed ? 'red' : 'accent'}>
-          {response.status}
-        </Badge>
-        {response.duration_seconds > 0 && (
-          <span style={{ color: 'var(--text-3)', fontSize: 11, marginLeft: 'auto', marginRight: 4 }}>
-            {fmt(response.duration_seconds)}
-          </span>
-        )}
-        {response.token_usage?.output > 0 && (
-          <span style={{ color: 'var(--text-3)', fontSize: 11 }}>
-            {response.token_usage.output} tok
-          </span>
-        )}
-        {open
-          ? <ChevronDown size={13} color="var(--text-3)" />
-          : <ChevronRight size={13} color="var(--text-3)" />
-        }
-      </button>
-      {open && (
-        <div style={{ padding: '0 14px 14px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ paddingTop: 12 }}>
-            {response.error
-              ? <p style={{ color: 'var(--red)', fontSize: 13 }}>{response.error}</p>
-              : <div className="md-output" style={{ fontSize: 13 }}>
-                  <ReactMarkdown>{response.result || ''}</ReactMarkdown>
-                </div>
-            }
-          </div>
+        <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)' }}>
+          <X size={15} />
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 10px' }}>
+        <Inp label="Agent ID" value={f.agent_id} onChange={v => set('agent_id', v)} placeholder="my-agent" small />
+        <Sel label="Provider" value={f.provider} onChange={v => { set('provider', v); set('model', (PROVIDER_MODELS[v] || [''])[0]) }} options={PROVIDERS} small />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0 10px', alignItems: 'end' }}>
+        <Sel label="Model" value={f.model} onChange={v => set('model', v)} options={modelOpts} small />
+        <div style={{ marginBottom: 8 }}>
+          <Inp label=" " value={f.model} onChange={v => set('model', v)} placeholder="or type custom" small />
         </div>
+      </div>
+
+      <Inp label="API Key" value={f.api_key} onChange={v => set('api_key', v)} placeholder="sk-..." type="password" small />
+      {(f.provider === 'openai_compat' || f.provider === 'local') && (
+        <Inp label="Base URL" value={f.base_url} onChange={v => set('base_url', v)} placeholder="http://localhost:11434/v1" small />
       )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 10px' }}>
+        <Inp label="Max Tokens" value={String(f.max_tokens)} onChange={v => set('max_tokens', parseInt(v) || 2048)} small />
+        <Inp label="Temperature" value={String(f.temperature)} onChange={v => set('temperature', parseFloat(v) || 0.7)} small />
+        <Inp label="Timeout (s)" value={String(f.timeout)} onChange={v => set('timeout', parseInt(v) || 60)} small />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button onClick={onCancel} style={{ flex: 1, padding: '8px', background: 'none',
+          border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-2)',
+          cursor: 'pointer', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+          Cancel
+        </button>
+        <button
+          onClick={() => { if (f.agent_id && f.provider && f.model) onSave(f) }}
+          disabled={!f.agent_id || !f.model}
+          style={{ flex: 2, padding: '8px', background: f.agent_id && f.model ? 'var(--accent)' : 'var(--bg-4)',
+            color: f.agent_id && f.model ? 'var(--bg)' : 'var(--text-3)',
+            border: 'none', borderRadius: 6, cursor: f.agent_id && f.model ? 'pointer' : 'not-allowed',
+            fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 12 }}>
+          {isEdit ? 'SAVE CHANGES' : 'CREATE AGENT'}
+        </button>
+      </div>
     </div>
   )
 }
 
-// ─── Integration Form ─────────────────────────────────────────────────────────
-const IntegrationForm = ({ onAdd, onClose }) => {
-  const [form, setForm] = useState({
-    id: '', name: '', description: '', base_url: '',
-    method: 'GET', path_template: '/', auth_type: 'none',
-    api_key: '', header_name: 'Authorization', prefix: 'Bearer',
-    param_name: '', param_desc: '',
-  })
+// ─── Agents Panel ──────────────────────────────────────────────────────────────
+const AgentsPanel = ({ agents, onRefresh }) => {
+  const [showForm, setShowForm] = useState(false)
+  const [editAgent, setEditAgent] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-
-  const handleSubmit = () => {
-    if (!form.id || !form.name || !form.base_url) return
-    const payload = {
-      id: form.id, name: form.name,
-      description: form.description, base_url: form.base_url,
-      method: form.method, path_template: form.path_template,
-      auth: form.auth_type !== 'none' ? {
-        type: form.auth_type,
-        api_key: form.api_key,
-        header_name: form.header_name,
-        prefix: form.prefix,
-      } : null,
-      parameters: form.param_name
-        ? { [form.param_name]: { type: 'string', description: form.param_desc } }
-        : {},
-      enabled: true,
-    }
-    onAdd(payload)
-  }
-
-  const inp = {
-    background: 'var(--bg-2)', border: '1px solid var(--border)',
-    borderRadius: 6, padding: '8px 10px', color: 'var(--text)',
-    fontFamily: 'var(--font-mono)', fontSize: 13, width: '100%',
-    outline: 'none',
-  }
-  const lbl = { fontSize: 11, color: 'var(--text-3)', marginBottom: 4, display: 'block', letterSpacing: '0.05em' }
-  const field = (label, key, placeholder, opts = {}) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={lbl}>{label.toUpperCase()}</label>
-      {opts.type === 'select'
-        ? <select value={form[key]} onChange={e => set(key, e.target.value)} style={inp}>
-            {opts.options.map(o => <option key={o}>{o}</option>)}
-          </select>
-        : <input
-            style={inp} placeholder={placeholder}
-            value={form[key]} onChange={e => set(key, e.target.value)}
-          />
+  const handleSave = async (f) => {
+    setSaving(true); setErr(null)
+    try {
+      const method = editAgent ? 'PUT' : 'POST'
+      const url = editAgent ? `/agents/${f.agent_id}` : '/agents'
+      const res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f)
+      })
+      if (!res.ok) {
+        const d = await res.json()
+        throw new Error(d.detail || 'Failed')
       }
-    </div>
-  )
+      setShowForm(false); setEditAgent(null)
+      await onRefresh()
+    } catch (e) { setErr(e.message) }
+    setSaving(false)
+  }
+
+  const handleDelete = async (id) => {
+    if (!confirm(`Delete agent "${id}"?`)) return
+    await fetch(`/agents/${id}`, { method: 'DELETE' })
+    await onRefresh()
+  }
+
+  const providerColor = { anthropic: 'var(--accent)', openai: 'var(--green)', openai_compat: 'var(--yellow)', local: '#c084fc' }
 
   return (
-    <div style={{
-      background: 'var(--bg-2)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)', padding: 20,
-      animation: 'slide-in 0.2s ease',
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <span style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 14 }}>Add Integration</span>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)' }}>
-          <X size={16} />
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <span style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.07em', fontFamily: 'var(--font-mono)' }}>
+          WORKER AGENTS ({agents.length})
+        </span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={onRefresh} style={{ background: 'none', border: '1px solid var(--border)',
+            borderRadius: 5, padding: '4px 8px', cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center' }}>
+            <RefreshCw size={11} />
+          </button>
+          <button onClick={() => { setShowForm(true); setEditAgent(null) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 4,
+              background: 'var(--accent-dim)', border: '1px solid #00e5ff30',
+              borderRadius: 6, padding: '5px 10px', cursor: 'pointer',
+              color: 'var(--accent)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+            <Plus size={11} /> ADD
+          </button>
+        </div>
+      </div>
+
+      {err && <div style={{ background: 'var(--red-dim)', border: '1px solid #ff446630', borderRadius: 6,
+        padding: '8px 12px', fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>{err}</div>}
+
+      {(showForm && !editAgent) && (
+        <div style={{ marginBottom: 12 }}>
+          <AgentForm onSave={handleSave} onCancel={() => setShowForm(false)} />
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+        {agents.map(a => (
+          <div key={a.id} style={{ background: 'var(--bg-2)', border: '1px solid var(--border)',
+            borderRadius: 8, overflow: 'hidden' }}>
+            {editAgent?.id === a.id
+              ? <AgentForm initial={{ ...a, agent_id: a.id }} isEdit onSave={handleSave}
+                  onCancel={() => setEditAgent(null)} />
+              : <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    background: providerColor[a.provider] || 'var(--text-3)' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>
+                      {a.id}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <span>{a.provider}</span>
+                      <span style={{ color: 'var(--border-2)' }}>·</span>
+                      <span style={{ color: 'var(--text-2)' }}>{a.model}</span>
+                      {a.base_url && <span style={{ color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120 }}>{a.base_url}</span>}
+                    </div>
+                  </div>
+                  <button onClick={() => setEditAgent(a)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 4 }}>
+                    <Edit2 size={12} />
+                  </button>
+                  <button onClick={() => handleDelete(a.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 4 }}>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+            }
+          </div>
+        ))}
+        {agents.length === 0 && !showForm && (
+          <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)', fontSize: 12 }}>
+            No agents. Add one to get started.
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Chat Tab ─────────────────────────────────────────────────────────────────
+const ChatTab = ({ agents }) => {
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [selectedAgent, setSelectedAgent] = useState('')
+  const [customMode, setCustomMode] = useState(false)
+  const [customProvider, setCustomProvider] = useState('anthropic')
+  const [customModel, setCustomModel] = useState('claude-haiku-4-5-20251001')
+  const [customApiKey, setCustomApiKey] = useState('')
+  const [customBaseUrl, setCustomBaseUrl] = useState('')
+  const [showConfig, setShowConfig] = useState(false)
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const bottomRef = useRef()
+  const inputRef = useRef()
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => { if (agents.length > 0 && !selectedAgent) setSelectedAgent(agents[0].id) }, [agents])
+
+  const getModelLabel = () => {
+    if (customMode) return `${customProvider} / ${customModel}`
+    const a = agents.find(x => x.id === selectedAgent)
+    return a ? `${a.id} (${a.model})` : 'No agent'
+  }
+
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return
+    const userMsg = { role: 'user', content: input.trim() }
+    const history = [...messages, userMsg]
+    setMessages(history)
+    setInput('')
+    setLoading(true)
+
+    try {
+      const body = {
+        messages: history.map(m => ({ role: m.role, content: m.content })),
+        system_prompt: systemPrompt || undefined,
+        ...(customMode
+          ? { provider: customProvider, model: customModel,
+              api_key: customApiKey || undefined, base_url: customBaseUrl || undefined }
+          : { agent_id: selectedAgent }),
+      }
+      const res = await fetch('/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Error')
+      setMessages(m => [...m, {
+        role: 'assistant', content: data.content,
+        meta: { model: data.model, provider: data.provider,
+                tokens: data.output_tokens, time: data.duration_seconds }
+      }])
+    } catch (e) {
+      setMessages(m => [...m, { role: 'assistant', content: `**Error:** ${e.message}`, isError: true }])
+    }
+    setLoading(false)
+    setTimeout(() => inputRef.current?.focus(), 50)
+  }
+
+  const handleKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Model selector bar */}
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-2)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <Bot size={14} color="var(--accent)" />
+        <span style={{ fontSize: 12, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>MODEL:</span>
+
+        <div style={{ display: 'flex', gap: 6, flex: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Agent pills */}
+          {!customMode && agents.map(a => (
+            <button key={a.id} onClick={() => setSelectedAgent(a.id)}
+              style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', border: 'none',
+                background: selectedAgent === a.id ? 'var(--accent)' : 'var(--bg-3)',
+                color: selectedAgent === a.id ? 'var(--bg)' : 'var(--text-2)',
+                transition: 'all 0.15s' }}>
+              {a.id}
+              <span style={{ opacity: 0.6, marginLeft: 4, fontSize: 10 }}>{a.model.split('-').slice(0,2).join('-')}</span>
+            </button>
+          ))}
+
+          {/* Custom model toggle */}
+          <button onClick={() => setCustomMode(m => !m)}
+            style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
+              fontFamily: 'var(--font-mono)', border: `1px solid ${customMode ? 'var(--yellow)' : 'var(--border)'}`,
+              background: customMode ? '#ffd16618' : 'none',
+              color: customMode ? 'var(--yellow)' : 'var(--text-3)' }}>
+            + custom
+          </button>
+        </div>
+
+        <button onClick={() => setShowConfig(s => !s)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer',
+            color: showConfig ? 'var(--accent)' : 'var(--text-3)' }}>
+          <Settings size={14} />
+        </button>
+
+        <button onClick={() => setMessages([])}
+          title="Clear chat"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)' }}>
+          <Trash2 size={13} />
         </button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
-        <div>{field('ID', 'id', 'my-api')}</div>
-        <div>{field('Name', 'name', 'My API')}</div>
-      </div>
-      {field('Description (shown to agents)', 'description', 'What does this API do?')}
-      {field('Base URL', 'base_url', 'https://api.example.com')}
-      <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '0 12px' }}>
-        <div>{field('Method', 'method', '', { type: 'select', options: ['GET', 'POST', 'PUT'] })}</div>
-        <div>{field('Path Template', 'path_template', '/search?q={query}')}</div>
-      </div>
-      {field('Auth Type', 'auth_type', '', { type: 'select', options: ['none', 'api_key', 'bearer'] })}
-      {form.auth_type !== 'none' && (
-        <>
-          {field('API Key', 'api_key', 'sk-...')}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: '0 12px' }}>
-            <div>{field('Header Name', 'header_name', 'Authorization')}</div>
-            <div>{field('Prefix', 'prefix', 'Bearer')}</div>
+
+      {/* Custom model config panel */}
+      {customMode && (
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-3)', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ flex: '0 0 130px' }}>
+            <Sel label="Provider" value={customProvider} onChange={v => { setCustomProvider(v); setCustomModel((PROVIDER_MODELS[v]||[''])[0]) }} options={PROVIDERS} small />
           </div>
-        </>
+          <div style={{ flex: '1 1 160px' }}>
+            <Inp label="Model" value={customModel} onChange={setCustomModel} placeholder="model-name" small />
+          </div>
+          <div style={{ flex: '1 1 180px' }}>
+            <Inp label="API Key" value={customApiKey} onChange={setCustomApiKey} placeholder="sk-..." type="password" small />
+          </div>
+          {(customProvider === 'openai_compat' || customProvider === 'local') && (
+            <div style={{ flex: '1 1 200px' }}>
+              <Inp label="Base URL" value={customBaseUrl} onChange={setCustomBaseUrl} placeholder="http://localhost:11434/v1" small />
+            </div>
+          )}
+        </div>
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
-        <div>{field('Parameter Name', 'param_name', 'query')}</div>
-        <div>{field('Parameter Description', 'param_desc', 'Search query')}</div>
+
+      {/* System prompt panel */}
+      {showConfig && (
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-3)' }}>
+          <label style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.07em', display: 'block', marginBottom: 4 }}>
+            SYSTEM PROMPT (OPTIONAL)
+          </label>
+          <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
+            placeholder="You are a helpful assistant…"
+            style={{ width: '100%', height: 60, resize: 'vertical', background: 'var(--bg)',
+              border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px',
+              color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
+        </div>
+      )}
+
+      {/* Messages */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+        {messages.length === 0 && (
+          <div style={{ textAlign: 'center', paddingTop: 60, color: 'var(--text-3)' }}>
+            <MessageSquare size={32} style={{ margin: '0 auto 12px', opacity: 0.2 }} />
+            <div style={{ fontFamily: 'var(--font-head)', fontSize: 14, color: 'var(--text-2)', marginBottom: 6 }}>
+              Direct Chat
+            </div>
+            <div style={{ fontSize: 12 }}>
+              Chat directly with any agent or configure a custom model above.
+            </div>
+          </div>
+        )}
+
+        {messages.map((msg, i) => (
+          <div key={i} style={{ marginBottom: 16, animation: 'slide-in 0.2s ease',
+            display: 'flex', flexDirection: 'column',
+            alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+            {/* Label */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4,
+              flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' }}>
+              <div style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                background: msg.role === 'user' ? 'var(--accent-dim)' : 'var(--bg-4)',
+                border: `1px solid ${msg.role === 'user' ? '#00e5ff30' : 'var(--border)'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {msg.role === 'user'
+                  ? <User size={11} color="var(--accent)" />
+                  : <Bot size={11} color="var(--text-3)" />}
+              </div>
+              <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
+                {msg.role === 'user' ? 'You' : getModelLabel()}
+              </span>
+              {msg.meta && (
+                <span style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                  · {msg.meta.tokens} tok · {fmt(msg.meta.time)}
+                </span>
+              )}
+            </div>
+
+            {/* Bubble */}
+            <div style={{
+              maxWidth: '85%', padding: '10px 14px', borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+              background: msg.role === 'user' ? 'var(--accent-dim)' : msg.isError ? 'var(--red-dim)' : 'var(--bg-2)',
+              border: `1px solid ${msg.role === 'user' ? '#00e5ff25' : msg.isError ? '#ff446630' : 'var(--border)'}`,
+            }}>
+              {msg.role === 'user'
+                ? <p style={{ fontSize: 13, color: 'var(--text)', margin: 0, whiteSpace: 'pre-wrap' }}>{msg.content}</p>
+                : <div className="md-output" style={{ fontSize: 13 }}><ReactMarkdown>{msg.content}</ReactMarkdown></div>
+              }
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0' }}>
+            <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--bg-4)',
+              border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Bot size={11} color="var(--text-3)" />
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {[0,1,2].map(n => <div key={n} style={{ width: 6, height: 6, borderRadius: '50%',
+                background: 'var(--text-3)', animation: `pulse-dot 1.2s ${n * 0.2}s infinite` }} />)}
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
       </div>
-      <button
-        onClick={handleSubmit}
-        style={{
-          width: '100%', padding: '10px', marginTop: 4,
-          background: 'var(--accent)', color: 'var(--bg)', border: 'none',
-          borderRadius: 6, cursor: 'pointer', fontFamily: 'var(--font-head)',
-          fontWeight: 700, fontSize: 13, letterSpacing: '0.03em',
-        }}
-      >
-        ADD INTEGRATION
+
+      {/* Input */}
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg-2)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
+            placeholder="Message… (Enter to send, Shift+Enter for newline)"
+            rows={1}
+            style={{ flex: 1, resize: 'none', background: 'var(--bg)', border: '1px solid var(--border)',
+              borderRadius: 8, padding: '9px 12px', color: 'var(--text)',
+              fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none',
+              maxHeight: 120, overflowY: 'auto', lineHeight: 1.5 }} />
+          <button onClick={sendMessage} disabled={!input.trim() || loading}
+            style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0,
+              background: input.trim() && !loading ? 'var(--accent)' : 'var(--bg-4)',
+              color: input.trim() && !loading ? 'var(--bg)' : 'var(--text-3)',
+              border: 'none', cursor: input.trim() && !loading ? 'pointer' : 'not-allowed',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
+            {loading ? <Spinner size={14} color="var(--text-3)" /> : <Send size={14} />}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Orchestrate result cards ──────────────────────────────────────────────────
+const AgentResultCard = ({ response }) => {
+  const [open, setOpen] = useState(false)
+  const ok = response.status === 'completed'
+  return (
+    <div style={{ border: `1px solid ${ok ? '#00ff9d28' : '#ff446628'}`, borderRadius: 8,
+      background: ok ? 'var(--green-dim)' : 'var(--red-dim)', overflow: 'hidden', animation: 'slide-in 0.25s ease' }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+          background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', textAlign: 'left' }}>
+        {ok ? <CheckCircle2 size={14} color="var(--green)" /> : <XCircle size={14} color="var(--red)" />}
+        <span style={{ fontFamily: 'var(--font-head)', fontWeight: 600, fontSize: 13 }}>{response.agent_id}</span>
+        <Badge color={ok ? 'green' : 'red'}>{response.status}</Badge>
+        {response.duration_seconds > 0 && <span style={{ color: 'var(--text-3)', fontSize: 11, marginLeft: 'auto', marginRight: 4 }}>{fmt(response.duration_seconds)}</span>}
+        {open ? <ChevronUp size={13} color="var(--text-3)" /> : <ChevronDown size={13} color="var(--text-3)" />}
       </button>
+      {open && (
+        <div style={{ padding: '0 14px 14px', borderTop: '1px solid #ffffff10' }}>
+          {response.error
+            ? <p style={{ color: 'var(--red)', fontSize: 13, paddingTop: 12 }}>{response.error}</p>
+            : <div className="md-output" style={{ fontSize: 13, paddingTop: 12 }}><ReactMarkdown>{response.result || ''}</ReactMarkdown></div>}
+        </div>
+      )}
     </div>
   )
 }
@@ -211,70 +501,328 @@ const IntegrationForm = ({ onAdd, onClose }) => {
 // ─── Integrations Panel ───────────────────────────────────────────────────────
 const IntegrationsPanel = ({ integrations, onAdd, onDelete, onToggle }) => {
   const [showForm, setShowForm] = useState(false)
+  const blank = { id:'', name:'', description:'', base_url:'', method:'GET', path_template:'/',
+    auth_type:'none', api_key:'', header_name:'Authorization', prefix:'Bearer', param_name:'', param_desc:'' }
+  const [f, setF] = useState(blank)
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }))
 
-  const handleAdd = async (payload) => {
-    await onAdd(payload)
-    setShowForm(false)
+  const handleAdd = async () => {
+    if (!f.id || !f.name || !f.base_url) return
+    await onAdd({
+      id: f.id, name: f.name, description: f.description, base_url: f.base_url,
+      method: f.method, path_template: f.path_template,
+      auth: f.auth_type !== 'none' ? { type: f.auth_type, api_key: f.api_key, header_name: f.header_name, prefix: f.prefix } : null,
+      parameters: f.param_name ? { [f.param_name]: { type: 'string', description: f.param_desc } } : {},
+      enabled: true,
+    })
+    setF(blank); setShowForm(false)
   }
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <span style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 13, letterSpacing: '0.05em', color: 'var(--text-2)' }}>
-          API INTEGRATIONS
+        <span style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.07em', fontFamily: 'var(--font-mono)' }}>
+          API INTEGRATIONS ({integrations.filter(i=>i.enabled).length} active)
         </span>
-        <button
-          onClick={() => setShowForm(s => !s)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            background: 'var(--accent-dim)', border: '1px solid #00e5ff30',
-            borderRadius: 6, padding: '5px 10px', cursor: 'pointer',
-            color: 'var(--accent)', fontSize: 12, fontFamily: 'var(--font-mono)',
-          }}
-        >
-          <Plus size={12} /> ADD
+        <button onClick={() => setShowForm(s => !s)}
+          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--accent-dim)',
+            border: '1px solid #00e5ff30', borderRadius: 6, padding: '5px 10px',
+            cursor: 'pointer', color: 'var(--accent)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+          <Plus size={11} /> ADD
         </button>
       </div>
 
-      {showForm && <IntegrationForm onAdd={handleAdd} onClose={() => setShowForm(false)} />}
+      {showForm && (
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 10px' }}>
+            <Inp label="ID" value={f.id} onChange={v=>set('id',v)} placeholder="my-api" small />
+            <Inp label="Name" value={f.name} onChange={v=>set('name',v)} placeholder="My API" small />
+          </div>
+          <Inp label="Description" value={f.description} onChange={v=>set('description',v)} placeholder="What it does" small />
+          <Inp label="Base URL" value={f.base_url} onChange={v=>set('base_url',v)} placeholder="https://api.example.com" small />
+          <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: '0 10px' }}>
+            <Sel label="Method" value={f.method} onChange={v=>set('method',v)} options={['GET','POST','PUT']} small />
+            <Inp label="Path Template" value={f.path_template} onChange={v=>set('path_template',v)} placeholder="/search?q={query}" small />
+          </div>
+          <Sel label="Auth" value={f.auth_type} onChange={v=>set('auth_type',v)} options={['none','api_key','bearer']} small />
+          {f.auth_type !== 'none' && <Inp label="API Key" value={f.api_key} onChange={v=>set('api_key',v)} placeholder="key…" type="password" small />}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 10px' }}>
+            <Inp label="Param Name" value={f.param_name} onChange={v=>set('param_name',v)} placeholder="query" small />
+            <Inp label="Param Desc" value={f.param_desc} onChange={v=>set('param_desc',v)} placeholder="Search query" small />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button onClick={() => setShowForm(false)} style={{ flex:1, padding:'7px', background:'none', border:'1px solid var(--border)', borderRadius:6, color:'var(--text-2)', cursor:'pointer', fontSize:11 }}>Cancel</button>
+            <button onClick={handleAdd} style={{ flex:2, padding:'7px', background:'var(--accent)', color:'var(--bg)', border:'none', borderRadius:6, cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:11 }}>ADD INTEGRATION</button>
+          </div>
+        </div>
+      )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: showForm ? 12 : 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
         {integrations.map(integ => (
-          <div key={integ.id} style={{
-            display: 'flex', alignItems: 'center', gap: 10,
+          <div key={integ.id} style={{ display: 'flex', alignItems: 'center', gap: 10,
             background: 'var(--bg-2)', border: `1px solid ${integ.enabled ? 'var(--border)' : 'var(--bg-4)'}`,
-            borderRadius: 'var(--radius)', padding: '10px 12px',
-            opacity: integ.enabled ? 1 : 0.5,
-            transition: 'opacity 0.2s',
-          }}>
-            <Globe size={14} color={integ.enabled ? 'var(--accent)' : 'var(--text-3)'} />
+            borderRadius: 8, padding: '9px 12px', opacity: integ.enabled ? 1 : 0.5, transition: 'opacity 0.2s' }}>
+            <Globe size={13} color={integ.enabled ? 'var(--accent)' : 'var(--text-3)'} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-head)', color: 'var(--text)' }}>
-                {integ.name}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {integ.base_url}
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-head)', color: 'var(--text)' }}>{integ.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{integ.base_url}</div>
             </div>
-            <button
-              onClick={() => onToggle(integ.id, !integ.enabled)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: integ.enabled ? 'var(--green)' : 'var(--text-3)', padding: 2 }}
-              title={integ.enabled ? 'Disable' : 'Enable'}
-            >
-              {integ.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+            <button onClick={() => onToggle(integ.id, !integ.enabled)} style={{ background:'none', border:'none', cursor:'pointer', color: integ.enabled ? 'var(--green)' : 'var(--text-3)', padding:2 }}>
+              {integ.enabled ? <ToggleRight size={17} /> : <ToggleLeft size={17} />}
             </button>
-            <button
-              onClick={() => onDelete(integ.id)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 2 }}
-              title="Delete"
-            >
-              <Trash2 size={13} />
+            <button onClick={() => onDelete(integ.id)} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-3)', padding:2 }}>
+              <Trash2 size={12} />
             </button>
           </div>
         ))}
         {integrations.length === 0 && !showForm && (
-          <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: 12, padding: '16px 0' }}>
-            No integrations configured
+          <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: 12, padding: '16px 0' }}>No integrations</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Settings Panel ───────────────────────────────────────────────────────────
+const ROLES = ['researcher','summarizer','analyst','writer','critic','coder','general']
+
+const SettingsPanel = ({ onSaved }) => {
+  const [settings, setSettings] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [resetPending, setResetPending] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState(null)
+  const [activeSection, setActiveSection] = useState('controller')
+
+  // Local editable copies
+  const [ctrl, setCtrl] = useState(null)
+  const [prompts, setPrompts] = useState(null)
+  const setC = (k, v) => setCtrl(p => ({ ...p, [k]: v }))
+  const setP = (k, v) => setPrompts(p => ({ ...p, [k]: v }))
+  const setRole = (role, v) => setPrompts(p => ({ ...p, role_prompts: { ...p.role_prompts, [role]: v } }))
+
+  useEffect(() => {
+    fetch('/settings').then(r => r.json()).then(d => {
+      setSettings(d)
+      setCtrl({ ...d.controller, api_key: '' })   // never pre-fill the key field
+      setPrompts(d.prompts)
+      setLoading(false)
+    }).catch(() => { setErr('Could not load settings'); setLoading(false) })
+  }, [])
+
+  const saveController = async () => {
+    setSaving(true); setErr(null)
+    try {
+      const res = await fetch('/settings/controller', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ctrl),
+      })
+      if (!res.ok) throw new Error((await res.json()).detail)
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+      onSaved && onSaved()
+    } catch(e) { setErr(e.message) }
+    setSaving(false)
+  }
+
+  const savePrompts = async () => {
+    setSaving(true); setErr(null)
+    try {
+      const res = await fetch('/settings/prompts', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prompts),
+      })
+      if (!res.ok) throw new Error((await res.json()).detail)
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } catch(e) { setErr(e.message) }
+    setSaving(false)
+  }
+
+  const resetPrompts = async () => {
+    if (!confirm('Reset all prompts to built-in defaults?')) return
+    setResetPending(true)
+    try {
+      const res = await fetch('/settings/prompts/reset', { method: 'POST' })
+      const d = await res.json()
+      setPrompts(d)
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } catch(e) { setErr(e.message) }
+    setResetPending(false)
+  }
+
+  if (loading) return <div style={{ padding: 40, textAlign:'center', color:'var(--text-3)' }}><Spinner /></div>
+
+  const sectionBtn = (key, icon, label) => (
+    <button onClick={() => setActiveSection(key)}
+      style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 12px', borderRadius:6,
+        background: activeSection===key ? 'var(--accent-dim)' : 'none',
+        border: `1px solid ${activeSection===key ? '#00e5ff22' : 'transparent'}`,
+        color: activeSection===key ? 'var(--accent)' : 'var(--text-3)',
+        cursor:'pointer', fontSize:12, fontFamily:'var(--font-mono)', width:'100%', textAlign:'left',
+        marginBottom:2 }}>
+      {icon} {label}
+    </button>
+  )
+
+  const textArea = (label, value, onChange, rows=4, placeholder='') => (
+    <div style={{ marginBottom:14 }}>
+      <label style={{ fontSize:10, color:'var(--text-3)', letterSpacing:'0.07em', display:'block', marginBottom:5, fontFamily:'var(--font-mono)' }}>{label.toUpperCase()}</label>
+      <textarea value={value} onChange={e=>onChange(e.target.value)} rows={rows} placeholder={placeholder}
+        style={{ width:'100%', resize:'vertical', background:'var(--bg)', border:'1px solid var(--border)',
+          borderRadius:6, padding:'9px 11px', color:'var(--text)', fontFamily:'var(--font-mono)',
+          fontSize:12, lineHeight:1.6, outline:'none', boxSizing:'border-box' }} />
+    </div>
+  )
+
+  return (
+    <div style={{ display:'flex', gap:20, alignItems:'flex-start' }}>
+      {/* Section nav */}
+      <div style={{ width:160, flexShrink:0 }}>
+        <div style={{ fontSize:10, color:'var(--text-3)', letterSpacing:'0.07em', marginBottom:8, fontFamily:'var(--font-mono)' }}>SECTION</div>
+        {sectionBtn('controller', <SlidersHorizontal size={12}/>, 'Controller LLM')}
+        {sectionBtn('prompts_ctrl', <ShieldCheck size={12}/>, 'Controller Prompts')}
+        {sectionBtn('prompts_agent', <Bot size={12}/>, 'Agent Prompts')}
+        {sectionBtn('prompts_roles', <Cpu size={12}/>, 'Role Prompts')}
+      </div>
+
+      {/* Section content */}
+      <div style={{ flex:1, minWidth:0 }}>
+        {err && <div style={{ background:'var(--red-dim)', border:'1px solid #ff446630', borderRadius:8,
+          padding:'9px 13px', fontSize:12, color:'var(--red)', marginBottom:14 }}>{err}</div>}
+
+        {saved && <div style={{ background:'var(--green-dim)', border:'1px solid #00ff9d30', borderRadius:8,
+          padding:'9px 13px', fontSize:12, color:'var(--green)', marginBottom:14, animation:'slide-in 0.2s ease' }}>
+          ✓ Settings saved — changes apply on next request
+        </div>}
+
+        {/* ── Controller LLM ── */}
+        {activeSection === 'controller' && ctrl && (
+          <div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:700, fontSize:15, marginBottom:16 }}>
+              Controller LLM
+            </div>
+            <div style={{ background:'var(--bg-3)', border:'1px solid var(--border)', borderRadius:10, padding:'12px 14px', marginBottom:14, fontSize:12, color:'var(--text-2)', lineHeight:1.6 }}>
+              The Controller decomposes user tasks and synthesises final answers. It uses a lower temperature than agents for deterministic task planning.
+            </div>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
+              <Sel label="Provider" value={ctrl.provider}
+                onChange={v => { setC('provider',v); setC('model',(PROVIDER_MODELS[v]||[''])[0]) }}
+                options={PROVIDERS} />
+              <div>
+                <Sel label="Model" value={ctrl.model} onChange={v=>setC('model',v)} options={PROVIDER_MODELS[ctrl.provider]||['custom-model']} />
+                <Inp label=" " value={ctrl.model} onChange={v=>setC('model',v)} placeholder="or type custom model" small />
+              </div>
+            </div>
+
+            <Inp label="API Key (leave blank to keep current)" value={ctrl.api_key||''} onChange={v=>setC('api_key',v)} placeholder="sk-... (only needed to change)" type="password" />
+            {(ctrl.provider==='openai_compat'||ctrl.provider==='local') &&
+              <Inp label="Base URL" value={ctrl.base_url||''} onChange={v=>setC('base_url',v)} placeholder="http://localhost:11434/v1" />}
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'0 10px' }}>
+              <Inp label="Max Tokens" value={String(ctrl.max_tokens)} onChange={v=>setC('max_tokens',parseInt(v)||4096)} small />
+              <Inp label="Temperature" value={String(ctrl.temperature)} onChange={v=>setC('temperature',parseFloat(v)||0.3)} small />
+              <Inp label="Timeout (s)" value={String(ctrl.timeout)} onChange={v=>setC('timeout',parseInt(v)||120)} small />
+              <Inp label="Max Retries" value={String(ctrl.max_retries)} onChange={v=>setC('max_retries',parseInt(v)||3)} small />
+            </div>
+
+            <button onClick={saveController} disabled={saving}
+              style={{ display:'flex', alignItems:'center', gap:7, marginTop:4,
+                background: saving ? 'var(--bg-4)' : 'var(--accent)', color: saving ? 'var(--text-3)' : 'var(--bg)',
+                border:'none', borderRadius:7, padding:'9px 18px', cursor: saving ? 'not-allowed' : 'pointer',
+                fontFamily:'var(--font-head)', fontWeight:700, fontSize:13 }}>
+              {saving ? <><Spinner size={13} color="var(--text-3)" /> Saving…</> : <><Save size={13}/> Save Controller</>}
+            </button>
+          </div>
+        )}
+
+        {/* ── Controller Prompts ── */}
+        {activeSection === 'prompts_ctrl' && prompts && (
+          <div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:700, fontSize:15, marginBottom:16 }}>
+              Controller Prompts
+            </div>
+            <div style={{ background:'var(--bg-3)', border:'1px solid var(--border)', borderRadius:10, padding:'12px 14px', marginBottom:14, fontSize:12, color:'var(--text-2)', lineHeight:1.6 }}>
+              Use <code style={{ background:'var(--bg-4)', padding:'1px 5px', borderRadius:3, color:'var(--accent)' }}>{'{agent_descriptions}'}</code> and <code style={{ background:'var(--bg-4)', padding:'1px 5px', borderRadius:3, color:'var(--accent)' }}>{'{tools_context}'}</code> in the decompose prompt — they are substituted at runtime.
+            </div>
+            {textArea('Decompose System Prompt', prompts.decompose_system, v=>setP('decompose_system',v), 10)}
+            {textArea('Synthesis System Prompt', prompts.synthesis_system, v=>setP('synthesis_system',v), 5)}
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={resetPrompts} disabled={resetPending}
+                style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px',
+                  background:'none', border:'1px solid var(--border)', borderRadius:7,
+                  color:'var(--text-3)', cursor:'pointer', fontSize:12, fontFamily:'var(--font-mono)' }}>
+                <RotateCcw size={12}/> Reset All Prompts
+              </button>
+              <button onClick={savePrompts} disabled={saving}
+                style={{ display:'flex', alignItems:'center', gap:7, flex:1,
+                  background: saving ? 'var(--bg-4)' : 'var(--accent)', color: saving ? 'var(--text-3)' : 'var(--bg)',
+                  border:'none', borderRadius:7, padding:'9px 18px', cursor: saving ? 'not-allowed' : 'pointer',
+                  fontFamily:'var(--font-head)', fontWeight:700, fontSize:13 }}>
+                {saving ? <><Spinner size={13} color="var(--text-3)"/> Saving…</> : <><Save size={13}/> Save Prompts</>}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Global Agent Prompt ── */}
+        {activeSection === 'prompts_agent' && prompts && (
+          <div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:700, fontSize:15, marginBottom:16 }}>
+              Global Agent System Prompt
+            </div>
+            <div style={{ background:'var(--bg-3)', border:'1px solid var(--border)', borderRadius:10, padding:'12px 14px', marginBottom:14, fontSize:12, color:'var(--text-2)', lineHeight:1.6 }}>
+              This text is appended to <em>every</em> agent's system message, after their role persona. Use it to set universal tone, formatting, or behaviour rules across all agents.
+            </div>
+            {textArea('Global Agent Suffix', prompts.global_agent_system, v=>setP('global_agent_system',v), 6,
+              'e.g. Always respond in bullet points. Never use markdown headers.')}
+            <button onClick={savePrompts} disabled={saving}
+              style={{ display:'flex', alignItems:'center', gap:7,
+                background: saving ? 'var(--bg-4)' : 'var(--accent)', color: saving ? 'var(--text-3)' : 'var(--bg)',
+                border:'none', borderRadius:7, padding:'9px 18px', cursor: saving ? 'not-allowed' : 'pointer',
+                fontFamily:'var(--font-head)', fontWeight:700, fontSize:13 }}>
+              {saving ? <><Spinner size={13} color="var(--text-3)"/> Saving…</> : <><Save size={13}/> Save</>}
+            </button>
+          </div>
+        )}
+
+        {/* ── Per-Role Prompts ── */}
+        {activeSection === 'prompts_roles' && prompts && (
+          <div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:700, fontSize:15, marginBottom:16 }}>
+              Per-Role Prompts
+            </div>
+            <div style={{ background:'var(--bg-3)', border:'1px solid var(--border)', borderRadius:10, padding:'12px 14px', marginBottom:14, fontSize:12, color:'var(--text-2)', lineHeight:1.6 }}>
+              When the controller assigns a role to an agent (researcher, writer, etc.), this persona prompt is prepended to their system message before the global suffix.
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+              {ROLES.map(role => (
+                <div key={role} style={{ marginBottom:10 }}>
+                  <label style={{ fontSize:10, color:'var(--text-3)', letterSpacing:'0.07em', display:'flex', alignItems:'center', gap:6, marginBottom:4, fontFamily:'var(--font-mono)' }}>
+                    <span style={{ background:'var(--bg-4)', border:'1px solid var(--border)', borderRadius:4, padding:'1px 7px', color:'var(--accent)' }}>{role}</span>
+                  </label>
+                  <textarea value={prompts.role_prompts?.[role]||''} onChange={e=>setRole(role,e.target.value)} rows={2}
+                    style={{ width:'100%', resize:'vertical', background:'var(--bg)', border:'1px solid var(--border)',
+                      borderRadius:6, padding:'7px 10px', color:'var(--text)', fontFamily:'var(--font-mono)',
+                      fontSize:12, lineHeight:1.5, outline:'none', boxSizing:'border-box' }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display:'flex', gap:8, marginTop:4 }}>
+              <button onClick={resetPrompts} disabled={resetPending}
+                style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px',
+                  background:'none', border:'1px solid var(--border)', borderRadius:7,
+                  color:'var(--text-3)', cursor:'pointer', fontSize:12, fontFamily:'var(--font-mono)' }}>
+                <RotateCcw size={12}/> Reset Defaults
+              </button>
+              <button onClick={savePrompts} disabled={saving}
+                style={{ display:'flex', alignItems:'center', gap:7, flex:1,
+                  background: saving ? 'var(--bg-4)' : 'var(--accent)', color: saving ? 'var(--text-3)' : 'var(--bg)',
+                  border:'none', borderRadius:7, padding:'9px 18px', cursor: saving ? 'not-allowed' : 'pointer',
+                  fontFamily:'var(--font-head)', fontWeight:700, fontSize:13 }}>
+                {saving ? <><Spinner size={13} color="var(--text-3)"/> Saving…</> : <><Save size={13}/> Save Role Prompts</>}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -284,29 +832,50 @@ const IntegrationsPanel = ({ integrations, onAdd, onDelete, onToggle }) => {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
+  const [tab, setTab] = useState('orchestrate')
+  const [agents, setAgents] = useState([])
+  const [integrations, setIntegrations] = useState([])
+  const [controller, setController] = useState(null)
+  const [serverOk, setServerOk] = useState(null)
   const [prompt, setPrompt] = useState('')
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
-  const [agents, setAgents] = useState([])
-  const [integrations, setIntegrations] = useState([])
-  const [activeTab, setActiveTab] = useState('prompt')  // prompt | integrations
-  const [serverOk, setServerOk] = useState(null)
   const fileRef = useRef()
   const textRef = useRef()
 
-  // ── Load initial data ──
+  // ── Live data via SSE ─────────────────────────────────────────────────────
   useEffect(() => {
-    fetch('/health')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setServerOk(true) })
-      .catch(() => setServerOk(false))
+    const loadStatic = async () => {
+      try {
+        const [ag, integ, sett] = await Promise.all([
+          fetch('/agents').then(r=>r.json()),
+          fetch('/integrations').then(r=>r.json()),
+          fetch('/settings').then(r=>r.json()),
+        ])
+        setAgents(ag.map(a => ({ ...a, id: a.id || a.agent_id })))
+        setIntegrations(integ)
+        setController(sett.controller)
+        setServerOk(true)
+      } catch { setServerOk(false) }
+    }
+    loadStatic()
 
-    fetch('/agents').then(r => r.json()).then(setAgents).catch(() => {})
-    fetch('/integrations').then(r => r.json()).then(setIntegrations).catch(() => {})
+    // SSE for live agent + controller updates
+    const es = new EventSource('/health/stream')
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        setAgents(data.agents.map(a => ({ ...a, id: a.id || a.agent_id })))
+        if (data.controller) setController(data.controller)
+        setServerOk(true)
+      } catch {}
+    }
+    es.onerror = () => setServerOk(false)
+    return () => es.close()
   }, [])
 
-  // ── Auto-resize textarea ──
+  // ── Auto resize textarea ──────────────────────────────────────────────────
   useEffect(() => {
     if (textRef.current) {
       textRef.current.style.height = 'auto'
@@ -314,229 +883,180 @@ export default function App() {
     }
   }, [prompt])
 
-  const handleFileAdd = (e) => {
-    const picked = Array.from(e.target.files || [])
-    setFiles(f => [...f, ...picked])
-    e.target.value = ''
+  const refreshAgents = async () => {
+    try {
+      const data = await fetch('/agents').then(r => r.json())
+      setAgents(data.map(a => ({ ...a, id: a.id || a.agent_id })))
+    } catch {}
   }
 
   const handleSubmit = async () => {
     if (!prompt.trim() || loading) return
-    setLoading(true)
-    setResult(null)
-
+    setLoading(true); setResult(null)
     try {
-      let response
+      let res
       if (files.length > 0) {
         const fd = new FormData()
         fd.append('prompt', prompt)
         files.forEach(f => fd.append('files', f))
-        response = await fetch('/orchestrate/with-files', { method: 'POST', body: fd })
+        res = await fetch('/orchestrate/with-files', { method: 'POST', body: fd })
       } else {
-        response = await fetch('/orchestrate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt }),
-        })
+        res = await fetch('/orchestrate', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) })
       }
-      const data = await response.json()
-      setResult(data)
-    } catch (err) {
-      setResult({ status: 'failed', error: err.message })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit()
+      setResult(await res.json())
+    } catch (e) { setResult({ status: 'failed', error: e.message }) }
+    setLoading(false)
   }
 
   // Integration ops
-  const addIntegration = async (payload) => {
-    const res = await fetch('/integrations', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    const data = await res.json()
-    setIntegrations(i => [...i, data])
+  const addInteg = async (p) => {
+    const res = await fetch('/integrations', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(p) })
+    const d = await res.json(); setIntegrations(i => [...i, d])
+  }
+  const delInteg = async (id) => { await fetch(`/integrations/${id}`, { method:'DELETE' }); setIntegrations(i=>i.filter(x=>x.id!==id)) }
+  const toggleInteg = async (id, enabled) => {
+    const res = await fetch(`/integrations/${id}/toggle?enabled=${enabled}`, { method:'PATCH' })
+    const d = await res.json(); setIntegrations(i => i.map(x => x.id===id ? d : x))
   }
 
-  const deleteIntegration = async (id) => {
-    await fetch(`/integrations/${id}`, { method: 'DELETE' })
-    setIntegrations(i => i.filter(x => x.id !== id))
-  }
+  const TABS = [
+    { key: 'orchestrate', icon: <Activity size={13} />, label: 'Orchestrate' },
+    { key: 'chat',        icon: <MessageSquare size={13} />, label: 'Chat' },
+    { key: 'agents',      icon: <Cpu size={13} />, label: 'Agents' },
+    { key: 'integrations',icon: <Globe size={13} />, label: 'Integrations' },
+    { key: 'settings',    icon: <Settings size={13} />, label: 'Settings' },
+  ]
 
-  const toggleIntegration = async (id, enabled) => {
-    const res = await fetch(`/integrations/${id}/toggle?enabled=${enabled}`, { method: 'PATCH' })
-    const data = await res.json()
-    setIntegrations(i => i.map(x => x.id === id ? data : x))
-  }
+  const statusColor = serverOk === null ? 'var(--yellow)' : serverOk ? 'var(--green)' : 'var(--red)'
 
-  // ── Layout ──
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-
       {/* ── Sidebar ── */}
-      <aside style={{
-        width: 260, flexShrink: 0,
-        background: 'var(--bg-2)', borderRight: '1px solid var(--border)',
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
-      }}>
+      <aside style={{ width: 220, flexShrink: 0, background: 'var(--bg-2)',
+        borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
         {/* Logo */}
-        <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: 8,
+        <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0,
               background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Activity size={16} color="var(--bg)" />
+              display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Activity size={15} color="var(--bg)" />
             </div>
             <div>
-              <div style={{ fontFamily: 'var(--font-head)', fontWeight: 800, fontSize: 14, letterSpacing: '-0.01em' }}>
+              <div style={{ fontFamily: 'var(--font-head)', fontWeight: 800, fontSize: 13, letterSpacing: '-0.01em' }}>
                 ORCHESTRATOR
               </div>
-              <div style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.08em' }}>
-                MULTI-AGENT LLM
-              </div>
+              <div style={{ fontSize: 9, color: 'var(--text-3)', letterSpacing: '0.1em' }}>MULTI-AGENT LLM</div>
             </div>
           </div>
-          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Dot color={serverOk === null ? 'var(--yellow)' : serverOk ? 'var(--green)' : 'var(--red)'} pulse={serverOk === null} />
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-              {serverOk === null ? 'Connecting…' : serverOk ? 'Server online' : 'Server offline'}
+          {/* Live status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6,
+            background: 'var(--bg-3)', borderRadius: 6, padding: '5px 8px',
+            border: '1px solid var(--border)' }}>
+            <Dot color={statusColor} pulse={serverOk === null} />
+            <span style={{ fontSize: 11, color: 'var(--text-3)', flex: 1 }}>
+              {serverOk === null ? 'Connecting…' : serverOk ? 'Online' : 'Offline'}
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--text-3)' }}>
+              {agents.length} agent{agents.length !== 1 ? 's' : ''}
             </span>
           </div>
         </div>
 
-        {/* Agents */}
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.07em', marginBottom: 10 }}>
-            ACTIVE AGENTS
-          </div>
-          {agents.length === 0
-            ? <div style={{ fontSize: 12, color: 'var(--text-3)' }}>Loading…</div>
-            : agents.map(a => (
-              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <Cpu size={12} color="var(--accent)" />
+        {/* Nav */}
+        <nav style={{ padding: '10px 10px 0' }}>
+          {TABS.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 10px', borderRadius: 6, marginBottom: 2,
+                background: tab === t.key ? 'var(--accent-dim)' : 'none',
+                border: `1px solid ${tab === t.key ? '#00e5ff22' : 'transparent'}`,
+                color: tab === t.key ? 'var(--accent)' : 'var(--text-3)',
+                cursor: 'pointer', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'left' }}>
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* Agent list (live) */}
+        <div style={{ padding: '14px 14px 8px', borderTop: '1px solid var(--border)', marginTop: 'auto' }}>
+          {controller && (
+            <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.07em', marginBottom: 5 }}>CONTROLLER</div>
+              <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+                <div style={{ width:6, height:6, borderRadius:'50%', flexShrink:0, background:'var(--yellow)' }} />
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', fontFamily: 'var(--font-head)' }}>
-                    {a.id}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-3)' }}>
-                    {a.provider} / {a.model}
-                  </div>
+                  <div style={{ fontSize:11, fontWeight:600, color:'var(--text)', fontFamily:'var(--font-head)' }}>{controller.provider}</div>
+                  <div style={{ fontSize:10, color:'var(--text-3)' }}>{controller.model?.split('-').slice(0,3).join('-')}</div>
+                </div>
+                <button onClick={() => setTab('settings')} title="Edit controller"
+                  style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-3)', padding:2, marginLeft:'auto' }}>
+                  <Edit2 size={10} />
+                </button>
+              </div>
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.07em', marginBottom: 8 }}>LIVE AGENTS</div>
+          {agents.length === 0
+            ? <div style={{ fontSize: 11, color: 'var(--text-3)' }}>No agents</div>
+            : agents.slice(0, 4).map(a => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                  background: a.provider === 'anthropic' ? 'var(--accent)' : a.provider === 'openai' ? 'var(--green)' : '#c084fc' }} />
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', fontFamily: 'var(--font-head)' }}>{a.id}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-3)' }}>{a.model?.split('-').slice(0,3).join('-')}</div>
                 </div>
               </div>
             ))
           }
-        </div>
-
-        {/* Nav tabs */}
-        <div style={{ padding: '12px 12px 0' }}>
-          {[
-            { key: 'prompt', icon: <Zap size={13} />, label: 'Prompt' },
-            { key: 'integrations', icon: <Globe size={13} />, label: 'Integrations' },
-          ].map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 10px', borderRadius: 6, marginBottom: 2,
-                background: activeTab === tab.key ? 'var(--accent-dim)' : 'none',
-                border: activeTab === tab.key ? '1px solid #00e5ff22' : '1px solid transparent',
-                color: activeTab === tab.key ? 'var(--accent)' : 'var(--text-3)',
-                cursor: 'pointer', fontSize: 13, fontFamily: 'var(--font-mono)',
-                textAlign: 'left', transition: 'all 0.15s',
-              }}
-            >
-              {tab.icon} {tab.label}
-              {tab.key === 'integrations' && integrations.length > 0 && (
-                <Badge color="accent">{integrations.filter(i => i.enabled).length}</Badge>
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Footer */}
-        <div style={{ padding: 16, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.05em' }}>
-            v2.0 · FastAPI + React
-          </div>
+          {agents.length > 4 && <div style={{ fontSize: 10, color: 'var(--text-3)' }}>+{agents.length - 4} more</div>}
         </div>
       </aside>
 
-      {/* ── Main ── */}
+      {/* ── Main Content ── */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
-
         {/* Top bar */}
-        <div style={{
-          padding: '14px 24px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 12,
-          background: 'var(--bg-2)',
-        }}>
-          <span style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 15 }}>
-            {activeTab === 'prompt' ? 'Task Prompt' : 'API Integrations'}
+        <div style={{ padding: '12px 22px', borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-2)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <span style={{ fontFamily: 'var(--font-head)', fontWeight: 800, fontSize: 15 }}>
+            {TABS.find(t => t.key === tab)?.label}
           </span>
-          {activeTab === 'prompt' && result && (
-            <Badge color={result.status === 'completed' ? 'green' : 'red'}>
-              {result.status}
-            </Badge>
-          )}
-          {activeTab === 'prompt' && result?.total_duration_seconds && (
-            <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}>
-              <Clock size={11} style={{ display: 'inline', marginRight: 4 }} />
-              {fmt(result.total_duration_seconds)} total
-            </span>
+          {tab === 'orchestrate' && result && (
+            <>
+              <Badge color={result.status === 'completed' ? 'green' : 'red'}>{result.status}</Badge>
+              {result.total_duration_seconds && (
+                <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}>
+                  <Clock size={10} style={{ display:'inline', marginRight:4 }} />{fmt(result.total_duration_seconds)}
+                </span>
+              )}
+            </>
           )}
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
+        {/* ── Orchestrate Tab ── */}
+        {tab === 'orchestrate' && (
+          <div style={{ flex: 1, overflow: 'auto', padding: 22 }}>
+            <div style={{ maxWidth: 820, margin: '0 auto' }}>
+              {/* Input */}
+              <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)', borderRadius:12, overflow:'hidden', marginBottom:20 }}>
+                <textarea ref={textRef} value={prompt} onChange={e=>setPrompt(e.target.value)}
+                  onKeyDown={e => { if (e.key==='Enter' && (e.metaKey||e.ctrlKey)) handleSubmit() }}
+                  placeholder="Describe your task — the controller will decompose it across your agents…"
+                  style={{ width:'100%', minHeight:80, resize:'none', background:'none', border:'none',
+                    outline:'none', padding:'16px 18px', color:'var(--text)', fontFamily:'var(--font-mono)',
+                    fontSize:14, lineHeight:1.6, boxSizing:'border-box' }} />
 
-          {/* ── Prompt Tab ── */}
-          {activeTab === 'prompt' && (
-            <div style={{ maxWidth: 800, margin: '0 auto' }}>
-
-              {/* Input card */}
-              <div style={{
-                background: 'var(--bg-2)', border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 20,
-              }}>
-                <textarea
-                  ref={textRef}
-                  value={prompt}
-                  onChange={e => setPrompt(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Describe your task — the controller will decompose it and dispatch to agents…"
-                  style={{
-                    width: '100%', minHeight: 80, resize: 'none',
-                    background: 'none', border: 'none', outline: 'none',
-                    padding: '16px 18px', color: 'var(--text)',
-                    fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.6,
-                  }}
-                />
-
-                {/* File chips */}
                 {files.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 18px 12px' }}>
-                    {files.map((f, i) => (
-                      <div key={i} style={{
-                        display: 'flex', alignItems: 'center', gap: 5,
-                        background: 'var(--bg-4)', border: '1px solid var(--border)',
-                        borderRadius: 4, padding: '3px 8px',
-                      }}>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:6, padding:'0 18px 10px' }}>
+                    {files.map((f,i) => (
+                      <div key={i} style={{ display:'flex', alignItems:'center', gap:5, background:'var(--bg-4)',
+                        border:'1px solid var(--border)', borderRadius:4, padding:'3px 8px' }}>
                         <Paperclip size={10} color="var(--accent)" />
-                        <span style={{ fontSize: 11, color: 'var(--text-2)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {f.name}
-                        </span>
-                        <button
-                          onClick={() => setFiles(fs => fs.filter((_, j) => j !== i))}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 0, lineHeight: 1 }}
-                        >
+                        <span style={{ fontSize:11, color:'var(--text-2)', maxWidth:150, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.name}</span>
+                        <button onClick={()=>setFiles(fs=>fs.filter((_,j)=>j!==i))}
+                          style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-3)', padding:0, lineHeight:1 }}>
                           <X size={10} />
                         </button>
                       </div>
@@ -544,179 +1064,141 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Toolbar */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '10px 14px', borderTop: '1px solid var(--border)',
-                  background: 'var(--bg-3)',
-                }}>
-                  <input ref={fileRef} type="file" multiple onChange={handleFileAdd} style={{ display: 'none' }} />
-                  <button
-                    onClick={() => fileRef.current.click()}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      background: 'none', border: '1px solid var(--border)',
-                      borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
-                      color: 'var(--text-3)', fontSize: 12,
-                    }}
-                  >
+                <div style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 14px',
+                  borderTop:'1px solid var(--border)', background:'var(--bg-3)' }}>
+                  <input ref={fileRef} type="file" multiple onChange={e=>{ setFiles(f=>[...f,...Array.from(e.target.files||[])]); e.target.value='' }} style={{ display:'none' }} />
+                  <button onClick={()=>fileRef.current.click()}
+                    style={{ display:'flex', alignItems:'center', gap:5, background:'none',
+                      border:'1px solid var(--border)', borderRadius:5, padding:'5px 10px',
+                      cursor:'pointer', color:'var(--text-3)', fontSize:12 }}>
                     <Paperclip size={12} /> Attach
                   </button>
-
-                  <div style={{ flex: 1 }} />
-
-                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                    {integrations.filter(i => i.enabled).length} tool{integrations.filter(i => i.enabled).length !== 1 ? 's' : ''} active
-                  </span>
-
-                  <button
-                    onClick={handleSubmit}
-                    disabled={!prompt.trim() || loading}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 7,
-                      background: prompt.trim() && !loading ? 'var(--accent)' : 'var(--bg-4)',
-                      color: prompt.trim() && !loading ? 'var(--bg)' : 'var(--text-3)',
-                      border: 'none', borderRadius: 6, padding: '7px 16px',
-                      cursor: prompt.trim() && !loading ? 'pointer' : 'not-allowed',
-                      fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 13,
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {loading
-                      ? <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Running</>
-                      : <><Send size={13} /> Run  <span style={{ opacity: 0.6, fontSize: 10, fontWeight: 400 }}>⌘↵</span></>
-                    }
+                  <div style={{ flex:1 }} />
+                  {agents.length === 0 && (
+                    <span style={{ fontSize:11, color:'var(--yellow)', display:'flex', alignItems:'center', gap:4 }}>
+                      <AlertCircle size={11} /> No agents configured
+                    </span>
+                  )}
+                  <button onClick={handleSubmit} disabled={!prompt.trim()||loading||agents.length===0}
+                    style={{ display:'flex', alignItems:'center', gap:7,
+                      background: prompt.trim()&&!loading&&agents.length>0 ? 'var(--accent)' : 'var(--bg-4)',
+                      color: prompt.trim()&&!loading&&agents.length>0 ? 'var(--bg)' : 'var(--text-3)',
+                      border:'none', borderRadius:6, padding:'7px 16px',
+                      cursor: prompt.trim()&&!loading&&agents.length>0 ? 'pointer' : 'not-allowed',
+                      fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, transition:'all 0.15s' }}>
+                    {loading ? <><Spinner size={13} color="var(--text-3)" /> Running</> : <><Send size={13} /> Run <span style={{ opacity:0.5, fontSize:10, fontWeight:400 }}>⌘↵</span></>}
                   </button>
                 </div>
               </div>
 
-              {/* Loading state */}
               {loading && (
-                <div style={{
-                  background: 'var(--bg-2)', border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-lg)', padding: 20,
-                  display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
-                }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: '50%',
-                    border: '2px solid var(--bg-4)', borderTop: '2px solid var(--accent)',
-                    animation: 'spin 0.8s linear infinite', flexShrink: 0,
-                  }} />
+                <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)', borderRadius:12,
+                  padding:20, display:'flex', alignItems:'center', gap:14, marginBottom:16 }}>
+                  <div style={{ width:36, height:36, borderRadius:'50%', flexShrink:0,
+                    border:'2px solid var(--bg-4)', borderTop:'2px solid var(--accent)',
+                    animation:'spin 0.8s linear infinite' }} />
                   <div>
-                    <div style={{ fontFamily: 'var(--font-head)', fontWeight: 700, marginBottom: 3 }}>
-                      Orchestrating…
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                      Controller decomposing task → dispatching agents concurrently
-                    </div>
+                    <div style={{ fontFamily:'var(--font-head)', fontWeight:700, marginBottom:3 }}>Orchestrating…</div>
+                    <div style={{ fontSize:12, color:'var(--text-3)' }}>Decomposing task → dispatching {agents.length} agent{agents.length!==1?'s':''} concurrently</div>
                   </div>
                 </div>
               )}
 
-              {/* Results */}
               {result && (
-                <div style={{ animation: 'slide-in 0.3s ease' }}>
-
-                  {/* Agent responses */}
+                <div style={{ animation:'slide-in 0.3s ease' }}>
                   {result.agent_responses?.length > 0 && (
-                    <div style={{ marginBottom: 20 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.07em', marginBottom: 10 }}>
-                        AGENT RESPONSES — {result.agent_responses.length} AGENT{result.agent_responses.length !== 1 ? 'S' : ''}
+                    <div style={{ marginBottom:16 }}>
+                      <div style={{ fontSize:11, color:'var(--text-3)', letterSpacing:'0.07em', marginBottom:8 }}>
+                        AGENT RESULTS — {result.agent_responses.length} AGENT{result.agent_responses.length!==1?'S':''}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {result.agent_responses.map(r => (
-                          <AgentCard key={r.task_id} response={r} isRunning={false} />
-                        ))}
+                      <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                        {result.agent_responses.map(r => <AgentResultCard key={r.task_id} response={r} />)}
                       </div>
                     </div>
                   )}
 
-                  {/* Final answer */}
                   {result.final_answer && (
-                    <div style={{
-                      background: 'var(--bg-2)', border: '1px solid var(--border)',
-                      borderLeft: '3px solid var(--accent)',
-                      borderRadius: 'var(--radius-lg)', overflow: 'hidden',
-                    }}>
-                      <div style={{
-                        padding: '12px 18px', borderBottom: '1px solid var(--border)',
-                        background: 'var(--bg-3)',
-                        display: 'flex', alignItems: 'center', gap: 8,
-                      }}>
+                    <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)',
+                      borderLeft:'3px solid var(--accent)', borderRadius:12, overflow:'hidden' }}>
+                      <div style={{ padding:'12px 18px', borderBottom:'1px solid var(--border)',
+                        background:'var(--bg-3)', display:'flex', alignItems:'center', gap:8 }}>
                         <CheckCircle2 size={14} color="var(--accent)" />
-                        <span style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 13 }}>
-                          FINAL ANSWER
-                        </span>
-                        <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}>
-                          {result.sub_task_count} sub-task{result.sub_task_count !== 1 ? 's' : ''}
-                        </span>
+                        <span style={{ fontFamily:'var(--font-head)', fontWeight:700, fontSize:13 }}>FINAL ANSWER</span>
+                        <span style={{ fontSize:11, color:'var(--text-3)', marginLeft:'auto' }}>{result.sub_task_count} sub-task{result.sub_task_count!==1?'s':''}</span>
                       </div>
-                      <div className="md-output" style={{ padding: '18px 20px' }}>
+                      <div className="md-output" style={{ padding:'18px 20px' }}>
                         <ReactMarkdown>{result.final_answer}</ReactMarkdown>
                       </div>
                     </div>
                   )}
 
                   {result.error && (
-                    <div style={{
-                      background: 'var(--red-dim)', border: '1px solid #ff446630',
-                      borderRadius: 'var(--radius-lg)', padding: 16,
-                    }}>
-                      <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 6 }}>Error</div>
-                      <div style={{ fontSize: 13, color: 'var(--text-2)' }}>{result.error}</div>
+                    <div style={{ background:'var(--red-dim)', border:'1px solid #ff446630', borderRadius:12, padding:16 }}>
+                      <div style={{ color:'var(--red)', fontWeight:600, marginBottom:6 }}>Error</div>
+                      <div style={{ fontSize:13, color:'var(--text-2)' }}>{result.error}</div>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Empty state */}
               {!result && !loading && (
-                <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-3)' }}>
-                  <Activity size={32} style={{ marginBottom: 12, opacity: 0.3 }} />
-                  <div style={{ fontFamily: 'var(--font-head)', fontSize: 15, marginBottom: 6, color: 'var(--text-2)' }}>
-                    Ready to orchestrate
-                  </div>
-                  <div style={{ fontSize: 12 }}>
-                    Type a prompt above and press Run — the controller will decompose your task<br />
-                    and dispatch sub-tasks to your agents concurrently.
-                  </div>
+                <div style={{ textAlign:'center', padding:'40px 20px', color:'var(--text-3)' }}>
+                  <Activity size={32} style={{ margin:'0 auto 12px', opacity:0.2 }} />
+                  <div style={{ fontFamily:'var(--font-head)', fontSize:15, marginBottom:6, color:'var(--text-2)' }}>Ready to orchestrate</div>
+                  <div style={{ fontSize:12 }}>Type a prompt — the controller decomposes your task<br/>and dispatches sub-tasks to your agents concurrently.</div>
                 </div>
               )}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* ── Integrations Tab ── */}
-          {activeTab === 'integrations' && (
-            <div style={{ maxWidth: 600, margin: '0 auto' }}>
-              <div style={{
-                background: 'var(--bg-2)', border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-lg)', padding: 20,
-              }}>
-                <IntegrationsPanel
-                  integrations={integrations}
-                  onAdd={addIntegration}
-                  onDelete={deleteIntegration}
-                  onToggle={toggleIntegration}
-                />
-              </div>
+        {/* ── Chat Tab ── */}
+        {tab === 'chat' && (
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <ChatTab agents={agents} />
+          </div>
+        )}
 
-              <div style={{
-                marginTop: 16, background: 'var(--bg-2)', border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-lg)', padding: 20,
-              }}>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.07em', marginBottom: 12 }}>
-                  HOW INTEGRATIONS WORK
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
-                  Enabled integrations are injected into each agent's system context as available tools.
-                  The agent can reference them in its reasoning and include tool results in its response.
-                  Use the path template with <code style={{ background: 'var(--bg-4)', padding: '1px 5px', borderRadius: 3, color: 'var(--accent)' }}>{'{param}'}</code> placeholders
-                  to define how parameters map to the URL.
-                </div>
+        {/* ── Agents Tab ── */}
+        {tab === 'agents' && (
+          <div style={{ flex: 1, overflow: 'auto', padding: 22 }}>
+            <div style={{ maxWidth: 680, margin: '0 auto' }}>
+              <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)', borderRadius:12, padding:20 }}>
+                <AgentsPanel agents={agents} onRefresh={refreshAgents} />
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* ── Integrations Tab ── */}
+        {tab === 'integrations' && (
+          <div style={{ flex: 1, overflow: 'auto', padding: 22 }}>
+            <div style={{ maxWidth: 600, margin: '0 auto' }}>
+              <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)', borderRadius:12, padding:20, marginBottom:16 }}>
+                <IntegrationsPanel integrations={integrations} onAdd={addInteg} onDelete={delInteg} onToggle={toggleInteg} />
+              </div>
+              <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)', borderRadius:12, padding:20 }}>
+                <div style={{ fontSize:11, color:'var(--text-3)', letterSpacing:'0.07em', marginBottom:10 }}>HOW INTEGRATIONS WORK</div>
+                <p style={{ fontSize:13, color:'var(--text-2)', lineHeight:1.7, margin:0 }}>
+                  Enabled integrations are injected into each agent's system context. Use <code style={{ background:'var(--bg-4)', padding:'1px 5px', borderRadius:3, color:'var(--accent)' }}>{'{param}'}</code> in the path template to map parameters to URL variables.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* ── Settings Tab ── */}
+        {tab === 'settings' && (
+          <div style={{ flex: 1, overflow: 'auto', padding: 22 }}>
+            <div style={{ maxWidth: 780, margin: '0 auto' }}>
+              <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)', borderRadius:12, padding:24 }}>
+                <SettingsPanel onSaved={() => {
+                  // Refresh controller display after save
+                  fetch('/settings').then(r=>r.json()).then(d => setController(d.controller)).catch(()=>{})
+                }} />
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )
